@@ -10,11 +10,11 @@ include(AICxxProject)
 #==============================================================================
 # OPTIONS
 
-# Set a default value for OptionPrimesCompression.
-set(OptionPrimesCompression "6" CACHE STRING "Compession level of Primes (3 - 6). Default: 6")
+# Set a default value for OptionFastPrimesCompression.
+set(OptionFastPrimesCompression "6" CACHE STRING "Compession level of Primes (3 - 6). Default: 6")
 
-message(DEBUG "OptionPrimesCompression is ${OptionPrimesCompression}")
-set(CW_PRIMES_COMPRESSION ${OptionPrimesCompression})
+message(DEBUG "OptionFastPrimesCompression is ${OptionFastPrimesCompression}")
+set(CW_FASTPRIMES_COMPRESSION ${OptionFastPrimesCompression})
 
 #==============================================================================
 # PLATFORM SPECIFIC CHECKS
@@ -35,7 +35,7 @@ add_library(fastprimes_ObjLib OBJECT)
 # Tell cwds/sys.h that we have a config.h.
 target_compile_definitions(fastprimes_ObjLib
   PUBLIC
-    HAVE_PRIMES_CONFIG_H
+    HAVE_FASTPRIMES_CONFIG_H
 )
 
 # Set SOURCE_DIR to the current directory.

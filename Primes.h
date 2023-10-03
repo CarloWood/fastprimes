@@ -40,7 +40,7 @@ constexpr int calc_repeat(prime_index_t n)
 // Define this to a smaller value to reduce the maximum size of sieve_word_t that will be used.
 constexpr int max_sieve_word_size = 6; // 3: uint8_t, 4: uint16_t, 5: uint32_t, 6: uint64_t.
 
-constexpr int compression_repeat = calc_repeat(config::primes_compression_c);   // Number of columns in the sieve.
+constexpr int compression_repeat = calc_repeat(config::fastprimes_compression_c);   // Number of columns in the sieve.
 
 template<int compression> struct SieveWordType;
 template<> struct SieveWordType<3> { using word_type = uint8_t; };
@@ -48,7 +48,7 @@ template<> struct SieveWordType<4> { using word_type = uint16_t; };
 template<> struct SieveWordType<5> { using word_type = uint32_t; };
 template<> struct SieveWordType<6> { using word_type = uint64_t; };
 
-using sieve_word_t = SieveWordType<std::min(config::primes_compression_c, max_sieve_word_size)>::word_type;
+using sieve_word_t = SieveWordType<std::min(config::fastprimes_compression_c, max_sieve_word_size)>::word_type;
 
 // If, for example, compression_repeat == 13 (which is never the case, but assume it was)
 // and sieve_word_t is one byte, we'd have the following situation:
@@ -72,11 +72,11 @@ class Primes
   using prime_t = prime_t;
   using sieve_word_t = sieve_word_t;
 
-  static constexpr int compression = config::primes_compression_c;              // The number of primes to skip, must be less than 7 or things overflow.
+  static constexpr int compression = config::fastprimes_compression_c;          // The number of primes to skip, must be less than 7 or things overflow.
   static constexpr int compression_primorial = calc_primorial(compression);     // The multiplication of the first `compression` primes.
   static constexpr int compression_first_prime = small_primes[compression];     // The first integer that is not divisible by any of the `compression` primes.
-  static constexpr integer_t small_primes_primorial = 614889782588491410ULL;            // p₁₅#, the largest primorial that fits in an integer_t.
-  static constexpr integer_t small_primes_mask = 0x8a20a08a28acULL;                     // A mask with a bit set for all small primes up to 47.
+  static constexpr integer_t small_primes_primorial = 614889782588491410ULL;    // p₁₅#, the largest primorial that fits in an integer_t.
+  static constexpr integer_t small_primes_mask = 0x8a20a08a28acULL;             // A mask with a bit set for all small primes up to 47.
 
   static integer_t calc_upper_bound_number_of_primes(integer_t n);
 
