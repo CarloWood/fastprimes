@@ -11,8 +11,7 @@
 #include <climits>
 #include "debug.h"
 
-namespace utils {
-namespace primes {
+namespace fastprimes {
 
 using prime_t = uint64_t;       // Used for primes.
 using integer_t = uint64_t;     // Used for (large) integers that might be primes.
@@ -66,18 +65,16 @@ constexpr int unused_bits = words_per_row * sieve_word_bits - compression_repeat
 // It's too much work to support unused bits (and would needlessly slow down the algorithm).
 static_assert(unused_bits == 0);
 
-} // namespace primes
-
 class Primes
 {
  public:
-  using integer_t = primes::integer_t;
-  using prime_t = primes::prime_t;
-  using sieve_word_t = primes::sieve_word_t;
+  using integer_t = integer_t;
+  using prime_t = prime_t;
+  using sieve_word_t = sieve_word_t;
 
   static constexpr int compression = config::primes_compression_c;              // The number of primes to skip, must be less than 7 or things overflow.
-  static constexpr int compression_primorial = primes::calc_primorial(compression);     // The multiplication of the first `compression` primes.
-  static constexpr int compression_first_prime = primes::small_primes[compression];     // The first integer that is not divisible by any of the `compression` primes.
+  static constexpr int compression_primorial = calc_primorial(compression);     // The multiplication of the first `compression` primes.
+  static constexpr int compression_first_prime = small_primes[compression];     // The first integer that is not divisible by any of the `compression` primes.
   static constexpr integer_t small_primes_primorial = 614889782588491410ULL;            // p₁₅#, the largest primorial that fits in an integer_t.
   static constexpr integer_t small_primes_mask = 0x8a20a08a28acULL;                     // A mask with a bit set for all small primes up to 47.
 
@@ -125,8 +122,8 @@ class Primes
     // n is not divisible by any of the skipped primes. Do a sieve look-up.
     int row    = (n - compression_first_prime) / compression_primorial;
     int column = row0_to_column[(n % compression_primorial) / 3];
-    unsigned int col_word_offset =                     column / primes::sieve_word_bits;
-    sieve_word_t col_mask        = sieve_word_t{1} << (column % primes::sieve_word_bits);
+    unsigned int col_word_offset =                     column / sieve_word_bits;
+    sieve_word_t col_mask        = sieve_word_t{1} << (column % sieve_word_bits);
     unsigned int wi = row + col_word_offset * sieve_rows_;
 
     return *(sieve_ + wi) & col_mask;
@@ -143,4 +140,4 @@ class Primes
   void calculate_primes(integer_t max_value);
 };
 
-} // namespace utils
+} // namespace fastprimes

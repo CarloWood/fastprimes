@@ -1,0 +1,15 @@
+#pragma once
+
+namespace config {
+
+//
+//
+// fastprimes_compression_c
+//
+// The number primes that are skipped in the sieve of Primes.
+// Possible values are 3, 4, 5 and 6. Coincidentally leading
+// to a maximum number of bits per sieve word of 2^compression.
+
+static constexpr int fastprimes_compression_c = @CW_FASTPRIMES_COMPRESSION@;
+
+} // namespace config
