@@ -2,6 +2,7 @@
 
 #include "utils/config.h"
 #include "utils/macros.h"
+#include "threadpool/AIQueueHandle.h"
 #include <cstdint>
 #include <vector>
 #include <array>
@@ -68,10 +69,6 @@ static_assert(unused_bits == 0);
 class Primes
 {
  public:
-  using integer_t = integer_t;
-  using prime_t = prime_t;
-  using sieve_word_t = sieve_word_t;
-
   static constexpr int compression = config::fastprimes_compression_c;          // The number of primes to skip, must be less than 7 or things overflow.
   static constexpr int compression_primorial = calc_primorial(compression);     // The multiplication of the first `compression` primes.
   static constexpr int compression_first_prime = small_primes[compression];     // The first integer that is not divisible by any of the `compression` primes.
@@ -96,7 +93,7 @@ class Primes
   int64_t index_end_;                   // Size of the sieve in bits.
 
  public:
-  Primes(integer_t max_value);
+  Primes(integer_t max_value, AIQueueHandle handler = {});
 
   ~Primes()
   {
