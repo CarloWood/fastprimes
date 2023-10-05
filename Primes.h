@@ -86,19 +86,27 @@ class Primes
   static std::array<uint16_t, row0_to_column_size> const row0_to_column;   // Needed for is_prime.
 
  private:
+  integer_t const max_value_;           // Only integers up till and including this value can be returned and/or tested.
+  integer_t const sqrt_max_value_;      // The sqrt of max_value_.
+  integer_t const sieve_rows_;          // The number of rows of sieve_.
   sieve_word_t* sieve_;
-  integer_t max_value_;                 // Only integers up till and including this value can be returned and/or tested.
-  integer_t sieve_rows_;                // The number of rows of sieve_.
   int64_t index_;                       // -3: reset, -2: 2, -1: 3, 0: 5, >0: sieve index.
   int64_t index_end_;                   // Size of the sieve in bits.
+  AIQueueHandle queue_handle_;          // The threadpool queue to use for sieving.
+#ifdef CWDEBUG
+  uint64_t debug_pi_;                   // Only used when CHECK_PRIMES is set to 1 in Primes.cxx.
+#endif
 
  public:
-  Primes(integer_t max_value, AIQueueHandle handler = {});
+  Primes(integer_t max_value, int number_of_threads, AIQueueHandle handler = {});
 
   ~Primes()
   {
     std::free(sieve_);
   }
+
+  template<bool is_row0>
+  [[gnu::always_inline]] inline int wipe_primes_of_row(int row, int number_of_threads);
 
   // Return a vector with all generated primes (don't use this when max_value is very large).
   // This function calls reset() and uses next_prime()!

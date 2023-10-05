@@ -17,8 +17,8 @@
 #endif
 
 #ifdef CWDEBUG
-#define CHECK_PRIMES 0          // Set to 1 to check that the first 189961811 generated primes are correct.
-#define CHECK_SIEVING 0         // Set to 1 to check that bits set in the sieve correspond to integers that are divisible by the current prime.
+#define CHECK_PRIMES 1          // Set to 1 to check that the first 189961811 generated primes are correct.
+#define CHECK_SIEVING 1         // Set to 1 to check that bits set in the sieve correspond to integers that are divisible by the current prime.
 #else
 #define CHECK_PRIMES 0          // Leave at 0.
 #define CHECK_SIEVING 0         // idem
@@ -101,7 +101,7 @@ void debug_init_primes()
   ifs.close();
 }
 #define CHECK_PRIME(prime) \
-  ASSERT(debug_pi > uint64_t{189961811} || prime == debug_primes[debug_pi++]);    // We can't test primes larger than 3,999,999,979.
+  ASSERT(debug_pi_ > uint64_t{189961811} || prime == debug_primes[debug_pi_++]);    // We can't test primes larger than 3,999,999,979.
 #else
 #define CHECK_PRIME(prime) do {} while(0)
 #endif // CWDEBUG
@@ -142,13 +142,172 @@ integer_t Primes::calc_upper_bound_number_of_primes(integer_t n)
   return std::exp(0.3125 * std::pow(1 / (logn - 4), 1.655) + logn - std::log(logn - 1)) - 4;
 }
 
+// COMMENT "precision":
+//
+// The largest value of `offset - row0[col]` is when `offset` has its largest value
+// and row0[col] is at its smallest. The latter happens when col = 0 (at which point
+// row0[col] equals compression_first_prime). The former, `offset` at its largest,
+// happens when `prime` is at its largest, which is `compression_first_prime_second_row`.
+// Note that compression_first_prime_second_row = compression_first_prime + compression_primorial.
+//
+// Let P = compression_primorial, F = compression_first_prime.
+// Then compression_first_prime_second_row = P + F.
+// Note that compression_offset_multiplier is more or less (P + F) / F.
+//
+// And we can write for the largest values involved:
+//   prime = P + F,
+//   offset = floor((P + F) / F) * (P + F);
+//   -row0[col] = -F
+//
+// The largest possible value of compression_primorial_inverse is prime - 1, or P + F - 1.
+//
+// Thus the largest possible value of ((offset - row0[col]) * compression_primorial_inverse) is (less than or) equal
+//
+//   M = (floor((P + F) / F) * (P + F) - F) * (P + F - 1)
+//
+// which becomes larger than what fits in an int when compression is 6:
+//  compression   F     P      M
+//  2             5     6      170
+//  3             7     30     6408
+//  4             11    210    969980
+//  5             13    2310   960102882
+//  6             17    30030  1595233239472
+//
+// This means that for compression = 6 we need 64 bit precision when multiplying with the compression_primorial_inverse.
+// Calculate the first row that has a multiple of this prime in colum `col`.
+
+template<bool is_row0>
+int Primes::wipe_primes_of_row(int row, int number_of_threads)
+{
+  AIThreadPool& thread_pool = AIThreadPool::instance();
+  integer_t const sieve_size = sieve_rows_ * words_per_row;   // The size of the sieve_ in words.
+  bool const use_thread_pool = !queue_handle_.undefined();
+
+  sieve_word_t* row_ptr = sieve_ + row;
+  int column = 0;
+  // Loop over all words in a row, by running over the word index offsets relative to the start of the current row.
+  for (unsigned int word_index_offset = 0; word_index_offset < sieve_size; word_index_offset += sieve_rows_)
+  {
+    // Loop over all bits in a word.
+    for (sieve_word_t column_mask = 1; column_mask != 0; column_mask <<= 1, ++column)
+    {
+      // Did we find the next prime?
+      if ((row_ptr[word_index_offset] & column_mask))
+      {
+        struct WipeWordColData
+        {
+          prime_t const prime_;
+          int const offset_;
+          int const compression_primorial_inverse_;
+          std::atomic_int col_word_;
+
+          WipeWordColData(prime_t prime) :
+            prime_(prime),
+            offset_(is_row0 ? compression_offset_multiplier * prime : prime),
+            compression_primorial_inverse_(modular_inverse(Primes::compression_primorial, prime)),
+            col_word_(0)
+          { }
+        };
+
+        WipeWordColData data(sieve_row_column_to_prime(row, column));
+        ASSERT(is_row0 || data.prime_ > Primes::compression_primorial);
+
+        CHECK_PRIME(data.prime_);
+
+        if constexpr (!is_row0)
+        {
+          if (data.prime_ > sqrt_max_value_)
+          {
+            // We're done.
+            return column;
+          }
+        }
+
+        auto wipe_word_column = [this, &data]() -> bool {
+          // Run over unprocessed word-columns.
+          for (;;)
+          {
+            // Get a word-column that isn't being wiped yet.
+            int col_word = data.col_word_.fetch_add(1, std::memory_order::release);
+            // Exit if all word-column have been processed.
+            if (col_word >= words_per_row)
+              return false;
+            unsigned int col_word_offset = col_word * sieve_rows_;
+            int col = col_word * sieve_word_bits;
+            // Run over all bits in the word(-column).
+            for (sieve_word_t col_mask = 1; col_mask != 0; col_mask <<= 1, ++col)
+            {
+              int first_row_with_prime_multiple;
+              if constexpr (is_row0)
+              {
+                // Calculate the first row that contains a multiple of data.prime_ in this col(umn).
+                // See "precision" comment above.
+                uint64_t first_row_with_prime_multiple64 = data.offset_ - row0[col];
+                first_row_with_prime_multiple64 *= data.compression_primorial_inverse_;
+                first_row_with_prime_multiple = first_row_with_prime_multiple64 % data.prime_;
+              }
+              else
+              {
+                // For row >= 1, prime >= row0[col] so we can simply subtract row0 from prime.
+                first_row_with_prime_multiple = ((data.prime_ - row0[col]) * data.compression_primorial_inverse_) % data.prime_;
+              }
+
+              // Run wi (word index) over all words in this word-column that have a bit in this col(umn)
+              // that represents an integer that is divisible by prime and reset it.
+              for (unsigned int wi = first_row_with_prime_multiple + col_word_offset; wi < sieve_rows_ + col_word_offset; wi += data.prime_)
+              {
+                sieve_[wi] &= ~col_mask;
+#if CHECK_SIEVING
+                int debug_row = wi % sieve_rows_;
+                int debug_col = (wi / sieve_rows_) * sieve_word_bits + (col % sieve_word_bits);
+                prime_t debug_prime = sieve_row_column_to_prime(debug_row, debug_col);
+                ASSERT(debug_col == col);
+                ASSERT(debug_prime % data.prime_ == 0);
+  //            Dout(dc::notice, "Inner loop: setting " << debug_prime << " to 0 because it is " << (debug_prime / data.prime_) << " * " << data.prime_);
+#endif
+              }
+            }
+          }
+        };
+        for (int thread = 0; thread < number_of_threads - 1; ++thread)
+        {
+          // Get read access to AIThreadPool::m_queues.
+          auto queues_access = thread_pool.queues_read_access();
+          // Get a reference to one of the queues in m_queues.
+          auto& queue = thread_pool.get_queue(queues_access, queue_handle_);
+          {
+            // Get producer accesses to this queue.
+            auto queue_access = queue.producer_access();
+            // The queue must be larger than or equal to the number of threads you use.
+            ASSERT(queue_access.length() < queue.capacity());
+            // Place a lambda in the queue.
+            queue_access.move_in(wipe_word_column);
+            // Release producer accesses, so another thread can write to this queue again.
+          }
+          // This function must be called every time move_in was called on a queue that was returned by thread_pool.get_queue.
+          queue.notify_one();
+          // Release read access to AIThreadPool::m_queues so another thread can use AIThreadPool::new_queue again.
+        }
+        wipe_word_column();
+        // Wait till all threads have finished.
+        while (data.col_word_.load(std::memory_order::acquire) < words_per_row + number_of_threads)
+          cpu_relax();
+        row_ptr[word_index_offset] |= column_mask;
+      }
+    }
+  }
+  // Continue with the next row.
+  return -1;
+}
+
 // Construct a sieve initialized for all primes up till and including max_value.
-Primes::Primes(integer_t max_value, AIQueueHandle queue_handle) :
-  sieve_(nullptr), max_value_(max_value), index_(-compression - 1)
+Primes::Primes(integer_t max_value, int number_of_threads, AIQueueHandle queue_handle) :
+  sieve_(nullptr), max_value_(max_value), sqrt_max_value_(std::sqrt(max_value)),
+  // Calculate how many integers are not divisible by the first `compression` number of primes that are less than or equal max_value.
+  sieve_rows_((max_value - compression_first_prime) / compression_primorial + 1),
+  index_(-compression - 1), queue_handle_(queue_handle)
 {
   ASSERT(max_value >= compression_first_prime_second_row);
-
-  bool const use_thread_pool = !queue_handle.undefined();
 
 #if USE_STOPWATCH
   benchmark::Stopwatch stopwatch(cpu);          // Declare stopwatch and configure on which CPU it must run.
@@ -156,15 +315,12 @@ Primes::Primes(integer_t max_value, AIQueueHandle queue_handle) :
 
 #if CHECK_PRIMES
   Debug(debug_init_primes());
-  uint64_t debug_pi = compression;
+  debug_pi_ = compression;
 #endif
 
 #if USE_STOPWATCH
   stopwatch.start();
 #endif
-  // Calculate how many integers are not divisible by the first `compression` number of primes that are less than or equal max_value.
-  sieve_rows_ = (max_value - Primes::compression_first_prime) / Primes::compression_primorial + 1;
-
   // Lets allocate whole rows, even if we only partially need the last one.
   integer_t sieve_size = sieve_rows_ * words_per_row;   // The size of the sieve_ in words.
   index_end_ = sieve_size * sieve_word_bits;            // The size of the sieve_ in bits.
@@ -181,8 +337,6 @@ Primes::Primes(integer_t max_value, AIQueueHandle queue_handle) :
   float delta = cycles / cpu_frequency;
   std::cout << "Time spent allocating and initializing sieve: " << delta << " seconds." << std::endl;
 #endif
-
-  integer_t const sqrt_max_value = std::sqrt(max_value);
 
   // sieve_ is a one dimensional vector, but can best be throught of as a two dimensional
   // table with width compression_repeat.
@@ -297,135 +451,8 @@ Primes::Primes(integer_t max_value, AIQueueHandle queue_handle) :
 #if USE_STOPWATCH
   stopwatch.start();
 #endif
-  AIThreadPool& thread_pool = AIThreadPool::instance();
-
-  // First do row 0.
-  int column = 0;
-  for (unsigned int word_index = 0; word_index < sieve_size; word_index += sieve_rows_)
-  {
-    for (sieve_word_t column_mask = 1; column_mask != 0; column_mask <<= 1, ++column)
-    {
-      // Did we find the next prime?
-      if ((sieve_[word_index] & column_mask))
-      {
-        struct WipeWordColData
-        {
-          prime_t const prime_;
-          int const offset_;
-          int const compression_primorial_inverse_;
-          std::atomic_int running_tasks_;
-
-          WipeWordColData(prime_t prime) :
-            prime_(prime),
-            offset_(compression_offset_multiplier * prime),
-            compression_primorial_inverse_(modular_inverse(Primes::compression_primorial, prime)),
-            running_tasks_(words_per_row)
-          { }
-        };
-
-        WipeWordColData data(sieve_row_column_to_prime(0, column));
-
-        CHECK_PRIME(data.prime_);
-
-        int col = 0;
-        for (unsigned int col_word_offset = 0; col_word_offset < sieve_size; col_word_offset += sieve_rows_, col += sieve_word_bits)
-        {
-          // Get read access to AIThreadPool::m_queues.
-          auto queues_access = thread_pool.queues_read_access();
-          // Get a reference to one of the queues in m_queues.
-          auto& queue = thread_pool.get_queue(queues_access, queue_handle);
-          bool queue_full;
-          {
-            // Get producer accesses to this queue.
-            auto queue_access = queue.producer_access();
-            do
-            {
-              int length = queue_access.length();
-              queue_full = length == queue.capacity();
-              if (queue_full)
-              {
-                std::cout << "Calling queue_access.wait for prime " << data.prime_ << '\n';
-                queue_access.wait();
-              }
-              else
-              {
-                std::cout << "Calling queue_access.move_in for prime " << data.prime_ << '\n';
-
-                // Place a lambda in the queue.
-                queue_access.move_in([this, col_copy = col, col_word_offset, &data]() -> bool {
-                  int col = col_copy;
-                  for (sieve_word_t col_mask = 1; col_mask != 0; col_mask <<= 1, ++col)
-                  {
-                    // The largest value of `offset - row0[col]` is when `offset` has its largest value
-                    // and row0[col] is at its smallest. The latter happens when col = 0 (at which point
-                    // row0[col] equals compression_first_prime). The former, `offset` at its largest,
-                    // happens when `prime` is at its largest, which is `compression_first_prime_second_row`.
-                    // Note that compression_first_prime_second_row = compression_first_prime + compression_primorial.
-                    //
-                    // Let P = compression_primorial, F = compression_first_prime.
-                    // Then compression_first_prime_second_row = P + F.
-                    // Note that compression_offset_multiplier is more or less (P + F) / F.
-                    //
-                    // And we can write for the largest values involved:
-                    //   prime = P + F,
-                    //   offset = floor((P + F) / F) * (P + F);
-                    //   -row0[col] = -F
-                    //
-                    // The largest possible value of compression_primorial_inverse is prime - 1, or P + F - 1.
-                    //
-                    // Thus the largest possible value of ((offset - row0[col]) * compression_primorial_inverse) is (less than or) equal
-                    //
-                    //   M = (floor((P + F) / F) * (P + F) - F) * (P + F - 1)
-                    //
-                    // which becomes larger than what fits in an int when compression is 6:
-                    //  compression   F     P      M
-                    //  2             5     6      170
-                    //  3             7     30     6408
-                    //  4             11    210    969980
-                    //  5             13    2310   960102882
-                    //  6             17    30030  1595233239472
-                    //
-                    // This means that for compression = 6 we need 64 bit precision when multiplying with the compression_primorial_inverse.
-                    // Calculate the first row that has a multiple of this prime in colum `col`.
-                    uint64_t first_row_with_prime_multiple64 = data.offset_ - row0[col];
-                    first_row_with_prime_multiple64 *= data.compression_primorial_inverse_;
-                    int first_row_with_prime_multiple = first_row_with_prime_multiple64 % data.prime_;
-
-                    for (unsigned int wi = first_row_with_prime_multiple + col_word_offset; wi < sieve_rows_ + col_word_offset; wi += data.prime_)
-                    {
-                      sieve_[wi] &= ~col_mask;
-#if CHECK_SIEVING
-                      int debug_row = wi % sieve_rows_;
-                      int debug_col = (wi / sieve_rows_) * sieve_word_bits + (col % sieve_word_bits);
-                      prime_t debug_prime = sieve_row_column_to_prime(debug_row, debug_col);
-                      ASSERT(debug_col == col);
-                      ASSERT(debug_prime % data.prime_ == 0);
-        //            Dout(dc::notice, "Loop1: setting " << debug_prime << " to 0 because it is " << (debug_prime / data.prime_) << " * " << data.prime_);
-#endif
-                    }
-                  }
-                  // This task is finished.
-                  data.running_tasks_.fetch_sub(1, std::memory_order::release);
-                  std::cout << "Finished task for prime " << data.prime_ << '\n';
-                  return false;
-                });
-              }
-            }
-            while (queue_full);
-            // Release producer accesses, so another thread can write to this queue again.
-          }
-          // This function must be called every time move_in was called
-          // on a queue that was returned by thread_pool.get_queue.
-          if (!queue_full) // Was move_in called?
-            queue.notify_one();
-          // Release read access to AIThreadPool::m_queues so another thread can use AIThreadPool::new_queue again.
-        }
-        while (data.running_tasks_.load(std::memory_order::acquire) != 0)
-          cpu_relax();
-        sieve_[word_index] |= column_mask;
-      }
-    }
-  }
+  // Reset all bits in sieve_ corresponding to composite numbers divisible by all primes found in row 0.
+  wipe_primes_of_row<true>(0, number_of_threads);
 #if USE_STOPWATCH
   stopwatch.stop();
   cycles = stopwatch.diff_cycles() - benchmark::Stopwatch::s_stopwatch_overhead;
@@ -436,63 +463,13 @@ Primes::Primes(integer_t max_value, AIQueueHandle queue_handle) :
 #if USE_STOPWATCH
   stopwatch.start();
 #endif
-  sieve_word_t* row_ptr = sieve_;
+  int row = 0;
   // Loop over all rows, starting with row 1 and find all primes up till
   // and including the first prime that is larger than sqrt_max_value.
   // For all primes less than or equal sqrt_max_value, remove multiples from the sieve_.
-  int row = 1;
-  for (;;)
-  {
-    // Update row_ptr to point to the start of the current row.
-    ++row_ptr;
-    column = 0;
-    // Loop over all words in a row.
-    for (unsigned int word_index_offset = 0; word_index_offset < sieve_size; word_index_offset += sieve_rows_)
-    {
-      // Loop over all bits in a word.
-      for (sieve_word_t column_mask = 1; column_mask != 0; column_mask <<= 1, ++column)
-      {
-        // Did we find the next prime?
-        if ((row_ptr[word_index_offset] & column_mask))
-        {
-          prime_t prime = sieve_row_column_to_prime(row, column);
-          ASSERT(prime > Primes::compression_primorial);
-          CHECK_PRIME(prime);
-
-          if (prime > sqrt_max_value)
-            goto done;
-
-          int const word_step = prime;
-          int compression_primorial_inverse = modular_inverse(Primes::compression_primorial, prime);
-
-          int col = 0;
-          for (unsigned int col_word_offset = 0; col_word_offset < sieve_size; col_word_offset += sieve_rows_)
-          {
-            for (sieve_word_t col_mask = 1; col_mask != 0; col_mask <<= 1, ++col)
-            {
-              // In this loop prime >= row0[col] so we can simply subtract row0 from prime.
-              int first_row_with_prime_multiple = ((prime - row0[col]) * compression_primorial_inverse) % prime;
-              for (unsigned int wi = first_row_with_prime_multiple + col_word_offset; wi < sieve_rows_ + col_word_offset; wi += word_step)
-              {
-                sieve_[wi] &= ~col_mask;
-#if CHECK_SIEVING
-                int debug_row = wi % sieve_rows_;
-                int debug_col = (wi / sieve_rows_) * sieve_word_bits + (col % sieve_word_bits);
-                prime_t debug_prime = sieve_row_column_to_prime(debug_row, debug_col);
-                ASSERT(debug_col == col);
-                ASSERT(debug_prime % prime == 0);
-//              Dout(dc::notice, "Loop2: setting " << debug_prime << " to 0 because it is " << (debug_prime / prime) << " * " << prime);
-#endif
-              }
-            }
-          }
-          row_ptr[word_index_offset] |= column_mask;
-        }
-      }
-    }
-    ++row;
-  }
-done:
+  int column;
+  while ((column = wipe_primes_of_row<false>(++row, number_of_threads)) == -1)
+    ;
 #if USE_STOPWATCH
   stopwatch.stop();
   cycles = stopwatch.diff_cycles() - benchmark::Stopwatch::s_stopwatch_overhead;
@@ -500,6 +477,7 @@ done:
   std::cout << "Time spent sieving row1-" << row << ": " << delta << " seconds." << std::endl;
 #endif
 
+#if CHECK_PRIMES
   // Find the word containing the last prime that is less than or equal max_value.
   //
   // For example, with sieve_size = 12 (words)
@@ -539,10 +517,7 @@ done:
     }
   }
 found:
-  {
-  }
 
-#if CHECK_PRIMES
 #if USE_STOPWATCH
   stopwatch.start();
 #endif
