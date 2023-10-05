@@ -9,7 +9,7 @@
 #include <thread>
 
 #if defined(__OPTIMIZE__)
-#define USE_STOPWATCH 0         // Set to 1 to write execution time information to std::cout.
+#define USE_STOPWATCH 1         // Set to 1 to write execution time information to std::cout.
 #endif
 
 #if USE_STOPWATCH
@@ -203,6 +203,8 @@ int Primes::wipe_primes_of_row(int row, int number_of_threads)
 
           WipeWordColData(prime_t prime) :
             prime_(prime),
+            // For row >= 1, prime >= row0[col] so we can simply subtract row0 from prime; this then avoids an overflow.
+            // Also see "precision" comment above, for row 0.
             offset_(is_row0 ? compression_offset_multiplier * prime : prime),
             compression_primorial_inverse_(modular_inverse(Primes::compression_primorial, prime)),
             col_word_(0)
@@ -237,20 +239,10 @@ int Primes::wipe_primes_of_row(int row, int number_of_threads)
             // Run over all bits in the word(-column).
             for (sieve_word_t col_mask = 1; col_mask != 0; col_mask <<= 1, ++col)
             {
-              int first_row_with_prime_multiple;
-              if constexpr (is_row0)
-              {
-                // Calculate the first row that contains a multiple of data.prime_ in this col(umn).
-                // See "precision" comment above.
-                uint64_t first_row_with_prime_multiple64 = data.offset_ - row0[col];
-                first_row_with_prime_multiple64 *= data.compression_primorial_inverse_;
-                first_row_with_prime_multiple = first_row_with_prime_multiple64 % data.prime_;
-              }
-              else
-              {
-                // For row >= 1, prime >= row0[col] so we can simply subtract row0 from prime.
-                first_row_with_prime_multiple = ((data.prime_ - row0[col]) * data.compression_primorial_inverse_) % data.prime_;
-              }
+              // Calculate the first row that contains a multiple of data.prime_ in this col(umn).
+              uint64_t first_row_with_prime_multiple64 = data.offset_ - row0[col];
+              first_row_with_prime_multiple64 *= data.compression_primorial_inverse_;
+              int first_row_with_prime_multiple = first_row_with_prime_multiple64 % data.prime_;
 
               // Run wi (word index) over all words in this word-column that have a bit in this col(umn)
               // that represents an integer that is divisible by prime and reset it.
