@@ -338,68 +338,80 @@ Primes::Primes(integer_t max_value, AIQueueHandle queue_handle) :
           {
             // Get producer accesses to this queue.
             auto queue_access = queue.producer_access();
-            int length = queue_access.length();
-            queue_full = length == queue.capacity();
-            if (!queue_full)
+            do
             {
-              // Place a lambda in the queue.
-              queue_access.move_in([this, col_copy = col, col_word_offset, &data]() -> bool {
-                int col = col_copy;
-                for (sieve_word_t col_mask = 1; col_mask != 0; col_mask <<= 1, ++col)
-                {
-                  // The largest value of `offset - row0[col]` is when `offset` has its largest value
-                  // and row0[col] is at its smallest. The latter happens when col = 0 (at which point
-                  // row0[col] equals compression_first_prime). The former, `offset` at its largest,
-                  // happens when `prime` is at its largest, which is `compression_first_prime_second_row`.
-                  // Note that compression_first_prime_second_row = compression_first_prime + compression_primorial.
-                  //
-                  // Let P = compression_primorial, F = compression_first_prime.
-                  // Then compression_first_prime_second_row = P + F.
-                  // Note that compression_offset_multiplier is more or less (P + F) / F.
-                  //
-                  // And we can write for the largest values involved:
-                  //   prime = P + F,
-                  //   offset = floor((P + F) / F) * (P + F);
-                  //   -row0[col] = -F
-                  //
-                  // The largest possible value of compression_primorial_inverse is prime - 1, or P + F - 1.
-                  //
-                  // Thus the largest possible value of ((offset - row0[col]) * compression_primorial_inverse) is (less than or) equal
-                  //
-                  //   M = (floor((P + F) / F) * (P + F) - F) * (P + F - 1)
-                  //
-                  // which becomes larger than what fits in an int when compression is 6:
-                  //  compression   F     P      M
-                  //  2             5     6      170
-                  //  3             7     30     6408
-                  //  4             11    210    969980
-                  //  5             13    2310   960102882
-                  //  6             17    30030  1595233239472
-                  //
-                  // This means that for compression = 6 we need 64 bit precision when multiplying with the compression_primorial_inverse.
-                  // Calculate the first row that has a multiple of this prime in colum `col`.
-                  uint64_t first_row_with_prime_multiple64 = data.offset_ - row0[col];
-                  first_row_with_prime_multiple64 *= data.compression_primorial_inverse_;
-                  int first_row_with_prime_multiple = first_row_with_prime_multiple64 % data.prime_;
+              int length = queue_access.length();
+              queue_full = length == queue.capacity();
+              if (queue_full)
+              {
+                std::cout << "Calling queue_access.wait for prime " << data.prime_ << '\n';
+                queue_access.wait();
+              }
+              else
+              {
+                std::cout << "Calling queue_access.move_in for prime " << data.prime_ << '\n';
 
-                  for (unsigned int wi = first_row_with_prime_multiple + col_word_offset; wi < sieve_rows_ + col_word_offset; wi += data.prime_)
+                // Place a lambda in the queue.
+                queue_access.move_in([this, col_copy = col, col_word_offset, &data]() -> bool {
+                  int col = col_copy;
+                  for (sieve_word_t col_mask = 1; col_mask != 0; col_mask <<= 1, ++col)
                   {
-                    sieve_[wi] &= ~col_mask;
+                    // The largest value of `offset - row0[col]` is when `offset` has its largest value
+                    // and row0[col] is at its smallest. The latter happens when col = 0 (at which point
+                    // row0[col] equals compression_first_prime). The former, `offset` at its largest,
+                    // happens when `prime` is at its largest, which is `compression_first_prime_second_row`.
+                    // Note that compression_first_prime_second_row = compression_first_prime + compression_primorial.
+                    //
+                    // Let P = compression_primorial, F = compression_first_prime.
+                    // Then compression_first_prime_second_row = P + F.
+                    // Note that compression_offset_multiplier is more or less (P + F) / F.
+                    //
+                    // And we can write for the largest values involved:
+                    //   prime = P + F,
+                    //   offset = floor((P + F) / F) * (P + F);
+                    //   -row0[col] = -F
+                    //
+                    // The largest possible value of compression_primorial_inverse is prime - 1, or P + F - 1.
+                    //
+                    // Thus the largest possible value of ((offset - row0[col]) * compression_primorial_inverse) is (less than or) equal
+                    //
+                    //   M = (floor((P + F) / F) * (P + F) - F) * (P + F - 1)
+                    //
+                    // which becomes larger than what fits in an int when compression is 6:
+                    //  compression   F     P      M
+                    //  2             5     6      170
+                    //  3             7     30     6408
+                    //  4             11    210    969980
+                    //  5             13    2310   960102882
+                    //  6             17    30030  1595233239472
+                    //
+                    // This means that for compression = 6 we need 64 bit precision when multiplying with the compression_primorial_inverse.
+                    // Calculate the first row that has a multiple of this prime in colum `col`.
+                    uint64_t first_row_with_prime_multiple64 = data.offset_ - row0[col];
+                    first_row_with_prime_multiple64 *= data.compression_primorial_inverse_;
+                    int first_row_with_prime_multiple = first_row_with_prime_multiple64 % data.prime_;
+
+                    for (unsigned int wi = first_row_with_prime_multiple + col_word_offset; wi < sieve_rows_ + col_word_offset; wi += data.prime_)
+                    {
+                      sieve_[wi] &= ~col_mask;
 #if CHECK_SIEVING
-                    int debug_row = wi % sieve_rows_;
-                    int debug_col = (wi / sieve_rows_) * sieve_word_bits + (col % sieve_word_bits);
-                    prime_t debug_prime = sieve_row_column_to_prime(debug_row, debug_col);
-                    ASSERT(debug_col == col);
-                    ASSERT(debug_prime % data.prime_ == 0);
-      //            Dout(dc::notice, "Loop1: setting " << debug_prime << " to 0 because it is " << (debug_prime / data.prime_) << " * " << data.prime_);
+                      int debug_row = wi % sieve_rows_;
+                      int debug_col = (wi / sieve_rows_) * sieve_word_bits + (col % sieve_word_bits);
+                      prime_t debug_prime = sieve_row_column_to_prime(debug_row, debug_col);
+                      ASSERT(debug_col == col);
+                      ASSERT(debug_prime % data.prime_ == 0);
+        //            Dout(dc::notice, "Loop1: setting " << debug_prime << " to 0 because it is " << (debug_prime / data.prime_) << " * " << data.prime_);
 #endif
+                    }
                   }
-                }
-                // This task is finished.
-                data.running_tasks_.fetch_sub(1, std::memory_order::release);
-                return false;
-              });
+                  // This task is finished.
+                  data.running_tasks_.fetch_sub(1, std::memory_order::release);
+                  std::cout << "Finished task for prime " << data.prime_ << '\n';
+                  return false;
+                });
+              }
             }
+            while (queue_full);
             // Release producer accesses, so another thread can write to this queue again.
           }
           // This function must be called every time move_in was called
