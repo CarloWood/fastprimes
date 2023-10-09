@@ -9,7 +9,7 @@
 #include <thread>
 
 #if defined(__OPTIMIZE__)
-#define USE_STOPWATCH 1         // Set to 1 to write execution time information to std::cout.
+#define USE_STOPWATCH 0         // Set to 1 to write execution time information to std::cout.
 #endif
 
 #if USE_STOPWATCH
@@ -17,8 +17,8 @@
 #endif
 
 #ifdef CWDEBUG
-#define CHECK_PRIMES 1          // Set to 1 to check that the first 189961811 generated primes are correct.
-#define CHECK_SIEVING 1         // Set to 1 to check that bits set in the sieve correspond to integers that are divisible by the current prime.
+#define CHECK_PRIMES 0          // Set to 1 to check that the first 189961811 generated primes are correct.
+#define CHECK_SIEVING 0         // Set to 1 to check that bits set in the sieve correspond to integers that are divisible by the current prime.
 #else
 #define CHECK_PRIMES 0          // Leave at 0.
 #define CHECK_SIEVING 0         // idem
