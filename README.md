@@ -1,11 +1,11 @@
 # fastprimes
-Fast small primes generator
+Fast small primes generator.
 
 # What it is for
 Generate a compressed sieve of Eratosthenes using all cores available.
 
-* ask for the next_prime, starting with 2; or
-* test quickly if a given integer (below a certain value N) is a prime.
+* Ask for the next_prime, starting with 2.
+* Test quickly if a given integer (below a certain value N) is a prime.
 
 # Low memory usage
 Compressed here means that the sieve only contains bits for integers
@@ -23,7 +23,8 @@ Note that five other git submodules of the same author are required:
 * [utils](https://github.com/CarloWood/ai-utils)
 * [threadsafe](https://github.com/CarloWood/threadsafe)
 * [threadpool](https://github.com/CarloWood/threadpool)
-These are required for the debug code and the thread pool.
+
+fThese are required for the debug code and the thread pool.
 
 Also note that `sum_first_n_primes.cxx` is the *only* good example in the testsuite;
 the rest is research that led up to this code and mostly doesn't even work.
