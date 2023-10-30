@@ -24,7 +24,7 @@ Note that five other git submodules of the same author are required:
 * [threadsafe](https://github.com/CarloWood/threadsafe)
 * [threadpool](https://github.com/CarloWood/threadpool)
 
-fThese are required for the debug code and the thread pool.
+These are required for the debug code and the thread pool.
 
 Also note that `sum_first_n_primes.cxx` is the *only* good example in the testsuite;
 the rest is research that led up to this code and mostly doesn't even work.
