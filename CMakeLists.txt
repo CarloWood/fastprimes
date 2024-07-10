@@ -38,12 +38,6 @@ target_compile_definitions(fastprimes_ObjLib
     HAVE_FASTPRIMES_CONFIG_H
 )
 
-# Set SOURCE_DIR to the current directory.
-set_property(
-  TARGET fastprimes_ObjLib
-  PROPERTY SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}"
-)
-
 # The list of source files.
 target_sources(fastprimes_ObjLib
   PRIVATE
